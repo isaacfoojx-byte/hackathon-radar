@@ -4,7 +4,7 @@ on:
   schedule:
     # Every 30 minutes: each run posts at most ONE queued event (30-min drip
     # pacing); sources are only re-fetched every 6 hours (tracked in the DB).
-    - cron: "7,37 * * * *"
+    - cron: "17,47 * * * *"
   workflow_dispatch:
     inputs:
       force_fetch:
