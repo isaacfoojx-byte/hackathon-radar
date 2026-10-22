@@ -1,4 +1,6 @@
 import logging
+import shutil
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -18,32 +20,31 @@ SOURCE_MODULES = {
 
 @contextmanager
 def preserve_source_state():
-    """Restore every source-owned state file after a preview.
+    """Run previews against scratch copies, leaving real source state untouched.
 
     Stateful source modules declare ``STATE_PATH``. Discovering those paths
     from the source registry keeps dry-run handling automatic for future
     sources that follow the same convention.
     """
-    snapshots: dict[Path, bytes | None] = {}
-    for source in SOURCE_MODULES.values():
-        state_path = getattr(source, "STATE_PATH", None)
-        if state_path is None:
-            continue
-        path = Path(state_path)
+    originals = {}
+    with tempfile.TemporaryDirectory(prefix="radar-dry-run-") as tmp:
         try:
-            snapshots[path] = path.read_bytes()
-        except FileNotFoundError:
-            snapshots[path] = None
-
-    try:
-        yield
-    finally:
-        for path, contents in snapshots.items():
-            if contents is None:
-                path.unlink(missing_ok=True)
-            else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(contents)
+            for name, source in SOURCE_MODULES.items():
+                state_path = getattr(source, "STATE_PATH", None)
+                if state_path is None:
+                    continue
+                scratch = Path(tmp) / name / Path(state_path).name
+                scratch.parent.mkdir()
+                try:
+                    shutil.copyfile(state_path, scratch)
+                except FileNotFoundError:
+                    pass
+                originals[source] = state_path
+                source.STATE_PATH = scratch
+            yield
+        finally:
+            for source, state_path in originals.items():
+                source.STATE_PATH = state_path
 
 
 def fetch_all(config: dict) -> list[Event]:

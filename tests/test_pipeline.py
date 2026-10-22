@@ -244,6 +244,8 @@ class TestDryRun:
         store.close()
 
     def test_dry_run_restores_source_state_bytes(self, tmp_path, monkeypatch):
+        from hackathon_radar.sources import email_source, watchlist
+
         cli, event, watchlist_path, email_path = self._setup_stateful_preview(tmp_path, monkeypatch)
         watchlist_before = b'{"page": "original spacing"}\n'
         email_before = b'{"last_uid": 41}\n'
@@ -251,8 +253,8 @@ class TestDryRun:
         email_path.write_bytes(email_before)
 
         def fetch_and_advance(_config):
-            watchlist_path.write_text('{"page": "new digest"}')
-            email_path.write_text('{"last_uid": 42}')
+            watchlist.STATE_PATH.write_text('{"page": "new digest"}')
+            email_source.STATE_PATH.write_text('{"last_uid": 42}')
             return [event]
 
         monkeypatch.setattr(cli, "fetch_all", fetch_and_advance)
@@ -262,13 +264,15 @@ class TestDryRun:
         assert email_path.read_bytes() == email_before
 
     def test_consecutive_dry_runs_are_repeatable(self, tmp_path, monkeypatch, capsys):
+        from hackathon_radar.sources import email_source, watchlist
+
         cli, event, watchlist_path, email_path = self._setup_stateful_preview(tmp_path, monkeypatch)
 
         def fetch_unless_consumed(_config):
-            if watchlist_path.exists() or email_path.exists():
+            if watchlist.STATE_PATH.exists() or email_source.STATE_PATH.exists():
                 return []
-            watchlist_path.write_text('{"page": "digest"}')
-            email_path.write_text('{"last_uid": 42}')
+            watchlist.STATE_PATH.write_text('{"page": "digest"}')
+            email_source.STATE_PATH.write_text('{"last_uid": 42}')
             return [event]
 
         monkeypatch.setattr(cli, "fetch_all", fetch_unless_consumed)
@@ -285,21 +289,52 @@ class TestDryRun:
         assert not email_path.exists()
 
     def test_source_state_restored_when_preview_fails(self, tmp_path, monkeypatch):
+        from hackathon_radar.sources import email_source, watchlist
+
         cli, _, watchlist_path, email_path = self._setup_stateful_preview(tmp_path, monkeypatch)
         before = b'{"page": "original"}\n'
         watchlist_path.write_bytes(before)
 
         def broken_fetch(_config):
-            watchlist_path.write_text('{"page": "changed"}')
-            email_path.write_text('{"last_uid": 42}')
+            watchlist.STATE_PATH.write_text('{"page": "changed"}')
+            email_source.STATE_PATH.write_text('{"last_uid": 42}')
             raise RuntimeError("preview failed")
 
         monkeypatch.setattr(cli, "fetch_all", broken_fetch)
 
         with pytest.raises(RuntimeError, match="preview failed"):
             cli.run(argparse.Namespace(dry_run=True, max_notify=None))
+        assert watchlist.STATE_PATH == watchlist_path
+        assert email_source.STATE_PATH == email_path
         assert watchlist_path.read_bytes() == before
         assert not email_path.exists()
+
+    def test_preview_preserves_concurrent_real_run_progress(self, tmp_path, monkeypatch):
+        from hackathon_radar.sources import email_source, watchlist
+
+        cli, event, watchlist_path, email_path = self._setup_stateful_preview(tmp_path, monkeypatch)
+        watchlist_path.write_bytes(b'{"page": "old"}')
+        email_path.write_bytes(b'{"last_uid": 100}')
+        scratch_paths = []
+
+        def fetch_and_advance(_config):
+            assert watchlist.STATE_PATH.read_bytes() == b'{"page": "old"}'
+            assert email_source.STATE_PATH.read_bytes() == b'{"last_uid": 100}'
+            scratch_paths.extend([watchlist.STATE_PATH, email_source.STATE_PATH])
+            watchlist.STATE_PATH.write_bytes(b'{"page": "preview"}')
+            email_source.STATE_PATH.write_bytes(b'{"last_uid": 105}')
+            # A separate process still writes to the original paths.
+            watchlist_path.write_bytes(b'{"page": "live"}')
+            email_path.write_bytes(b'{"last_uid": 110}')
+            return [event]
+
+        monkeypatch.setattr(cli, "fetch_all", fetch_and_advance)
+        assert cli.run(argparse.Namespace(dry_run=True, max_notify=None)) == 0
+        assert watchlist_path.read_bytes() == b'{"page": "live"}'
+        assert email_path.read_bytes() == b'{"last_uid": 110}'
+        assert watchlist.STATE_PATH == watchlist_path
+        assert email_source.STATE_PATH == email_path
+        assert all(not path.exists() for path in scratch_paths)
 
 
 class TestFormatMessage:

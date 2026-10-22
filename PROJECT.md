@@ -141,8 +141,9 @@ Secrets (GitHub + local `.env`): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`,
 never in chat/screenshots; error paths and httpx logs are sanitized because a
 bot token leaked via a traceback once (regenerate via @BotFather `/revoke`).
 
-`--dry-run` snapshots and restores source-owned state files, even if previewing
-fails, so repeated previews do not consume watchlist changes or email UIDs.
+`--dry-run` uses temporary copies of source-owned state files, so repeated
+previews do not consume watchlist changes or email UIDs. Real files remain
+untouched even if previewing fails or a separate real run advances them.
 
 Cache reset (`gh cache delete`) = every current event looks new again → up to
 one day's cap re-posts, and one full re-scoring/enrichment spend. Deliberate

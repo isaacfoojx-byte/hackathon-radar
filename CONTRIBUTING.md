@@ -67,11 +67,11 @@ channel, never @EventSonar.
 
 1. **Never run `radar run` against production credentials.** Use `--dry-run`, or
    a fully sandboxed `.env`.
-2. **`--dry-run` is not side-effect free.** It writes nothing to the events DB,
-   but the watchlist and email fetchers still advance their own state (page
-   content-hashes, IMAP UID) — pointed at production, a dry run silently
-   consumes events the live channel then never posts. This is a known gap; see
-   PROJECT.md.
+2. **`--dry-run` writes nothing to the events DB and leaves real source state
+   untouched.** Watchlist hashes and email UIDs are copied to temporary files,
+   so previews are repeatable and cannot roll back a concurrent real run.
+   Previews still call Claude for changed pages and unseen emails, so each
+   preview costs API spend.
 3. **Never add a `pull_request` trigger to `radar.yml`.** That would give branch
    code access to the live secrets. `ci.yml` runs PR tests and holds no secrets.
 4. **Don't commit `.env`,** and don't paste tokens into issues, screenshots, or
